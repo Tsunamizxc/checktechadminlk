@@ -3,25 +3,19 @@ set -euo pipefail
 
 REPO_DIR="${REPO_DIR:-/var/www/chectech_cur_usr/data/deploy/checktechadminlk}"
 WP_ROOT="${WP_ROOT:-/var/www/chectech_cur_usr/data/www/chectechadm.cursiva-dev.ru}"
-TMP="/tmp/checktechadminlk-sync"
+KEY="${DEPLOY_KEY:-/root/.ssh/chectechadm_deploy}"
+export GIT_SSH_COMMAND="ssh -i $KEY -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new"
 
-mkdir -p "$REPO_DIR" "$TMP"
+mkdir -p "$REPO_DIR"
 cd "$REPO_DIR"
 
-# 1) Try public GitHub zip (no auth)
-if curl -fsSL -o "$TMP/main.zip" "https://github.com/Tsunamizxc/checktechadminlk/archive/refs/heads/main.zip"; then
-  rm -rf "$TMP/src"
-  mkdir -p "$TMP/src"
-  unzip -q -o "$TMP/main.zip" -d "$TMP/src"
-  SRC="$(find "$TMP/src" -maxdepth 1 -type d -name 'checktechadminlk-*' | head -n 1)"
-  if [ -n "$SRC" ]; then
-    rsync -a --delete --exclude .git "$SRC/" "$REPO_DIR/"
-  fi
-elif [ -d .git ]; then
-  # 2) Fallback: git pull (needs credentials/deploy key for private repo)
-  git fetch --all || true
-  git reset --hard origin/main || git reset --hard main || true
+if [ ! -d .git ]; then
+  git clone git@github.com:Tsunamizxc/checktechadminlk.git "$REPO_DIR"
 fi
+
+git remote set-url origin git@github.com:Tsunamizxc/checktechadminlk.git
+git fetch origin
+git reset --hard origin/main
 
 rsync -a --delete \
   "$REPO_DIR/wp-content/themes/lktech-crm/" \

@@ -55,7 +55,17 @@ add_filter('login_redirect', static function ($redirect_to, $requested, $user) {
 }, 10, 3);
 
 add_action('after_setup_theme', static function () {
-    show_admin_bar(current_user_can('manage_options'));
+    // Фронт CRM без WP admin bar.
+    if (!is_admin()) {
+        show_admin_bar(false);
+    }
+});
+
+add_filter('show_admin_bar', static function ($show) {
+    if (!is_admin()) {
+        return false;
+    }
+    return $show;
 });
 
 add_action('admin_init', static function () {

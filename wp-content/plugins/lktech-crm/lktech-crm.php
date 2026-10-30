@@ -11,7 +11,7 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
-define('LKTECH_CRM_VERSION', '1.0.0');
+define('LKTECH_CRM_VERSION', '1.1.0');
 define('LKTECH_CRM_FILE', __FILE__);
 define('LKTECH_CRM_DIR', plugin_dir_path(__FILE__));
 define('LKTECH_CRM_URL', plugin_dir_url(__FILE__));
@@ -46,3 +46,11 @@ function lktech_crm_deactivate(): void
 add_action('plugins_loaded', static function () {
     load_plugin_textdomain('lktech-crm', false, dirname(plugin_basename(__FILE__)) . '/languages');
 });
+
+add_action('init', static function () {
+    if (get_option('lktech_crm_rewrite_ver') === LKTECH_CRM_VERSION) {
+        return;
+    }
+    flush_rewrite_rules(false);
+    update_option('lktech_crm_rewrite_ver', LKTECH_CRM_VERSION);
+}, 99);

@@ -8,6 +8,11 @@ add_action('after_setup_theme', static function () {
     add_theme_support('title-tag');
 });
 
+add_filter('body_class', static function ($classes) {
+    $classes[] = 'lk-body';
+    return $classes;
+});
+
 add_action('wp_enqueue_scripts', static function () {
     wp_enqueue_style(
         'lktech-fonts',
@@ -19,7 +24,13 @@ add_action('wp_enqueue_scripts', static function () {
         'lktech-crm',
         get_template_directory_uri() . '/assets/css/crm.css',
         ['lktech-fonts'],
-        '3.1.0'
+        '3.2.0'
+    );
+
+    // Скрываем WP admin bar на фронте CRM.
+    wp_add_inline_style(
+        'lktech-crm',
+        '#wpadminbar{display:none!important}html.admin-bar{margin-top:0!important}body.admin-bar{padding-top:0!important}'
     );
 
     if (!is_user_logged_in() || !function_exists('lktech_crm_user_can_access') || !lktech_crm_user_can_access()) {
@@ -30,19 +41,21 @@ add_action('wp_enqueue_scripts', static function () {
         'lktech-crm',
         get_template_directory_uri() . '/assets/js/crm.js',
         [],
-        '3.1.0',
+        '3.2.0',
         true
     );
 
     wp_localize_script('lktech-crm', 'LKTECH', [
-        'rest'   => esc_url_raw(rest_url('lktech/v1')),
-        'nonce'  => wp_create_nonce('wp_rest'),
-        'home'   => home_url('/'),
-        'user'   => [
+        'rest'     => esc_url_raw(rest_url('lktech/v1')),
+        'nonce'    => wp_create_nonce('wp_rest'),
+        'home'     => home_url('/'),
+        'settings' => home_url('/settings/'),
+        'user'     => [
             'id'   => get_current_user_id(),
             'name' => wp_get_current_user()->display_name,
         ],
-        'leadId' => (int) get_query_var('lk_lead_id'),
+        'leadId'   => (int) get_query_var('lk_lead_id'),
+        'page'     => (int) get_query_var('lk_settings') === 1 ? 'settings' : 'dashboard',
     ]);
 });
 
@@ -51,6 +64,15 @@ add_filter('template_include', static function ($template) {
         $login = get_template_directory() . '/templates/login.php';
         if (is_file($login)) {
             return $login;
+        }
+    }
+
+    $is_settings = (int) get_query_var('lk_settings') === 1
+        || (isset($_SERVER['REQUEST_URI']) && preg_match('#/settings/?(\?|$)#', (string) $_SERVER['REQUEST_URI']));
+    if ($is_settings) {
+        $settings = get_template_directory() . '/templates/settings.php';
+        if (is_file($settings)) {
+            return $settings;
         }
     }
 

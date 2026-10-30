@@ -39,10 +39,12 @@ add_action('init', 'lktech_crm_register_cpt');
 add_action('init', static function () {
     add_rewrite_rule('^lead/([0-9]+)/?$', 'index.php?lk_lead_id=$matches[1]', 'top');
     add_rewrite_rule('^login/?$', 'index.php?lk_login=1', 'top');
+    add_rewrite_rule('^settings/?$', 'index.php?lk_settings=1', 'top');
 });
 
 add_filter('query_vars', static function ($vars) {
     $vars[] = 'lk_lead_id';
     $vars[] = 'lk_login';
+    $vars[] = 'lk_settings';
     return $vars;
 });

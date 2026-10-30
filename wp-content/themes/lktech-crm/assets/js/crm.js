@@ -1,6 +1,18 @@
 (() => {
-  const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-  const POLL_MS = 8000;
+  const SETTINGS_KEY = "lktech_settings_v1";
+  const SEEN_KEY = "lktech_seen_ids";
+  const VIEWS = ["list", "detail", "tools"];
+  const defaults = {
+    themeDark: false,
+    compact: false,
+    reduceMotion: false,
+    sound: localStorage.getItem("lktech_sound") === "1",
+    desktopNotify: false,
+    autoOpen: false,
+    onlyUnread: false,
+    showUnreadBadge: true,
+    pollMs: 8000,
+  };
 
   const api = async (path, options = {}) => {
     const res = await fetch(`${LKTECH.rest}${path}`, {
@@ -26,6 +38,36 @@
       .replace(/>/g, "&gt;")
       .replace(/"/g, "&quot;");
 
+  function loadSettings() {
+    try {
+      return { ...defaults, ...JSON.parse(localStorage.getItem(SETTINGS_KEY) || "{}") };
+    } catch (_) {
+      return { ...defaults };
+    }
+  }
+
+  function saveSettings(next) {
+    localStorage.setItem(SETTINGS_KEY, JSON.stringify(next));
+    localStorage.setItem("lktech_sound", next.sound ? "1" : "0");
+  }
+
+  function loadSeen() {
+    try {
+      const raw = JSON.parse(localStorage.getItem(SEEN_KEY) || "[]");
+      return new Set(Array.isArray(raw) ? raw.map(Number) : []);
+    } catch (_) {
+      return new Set();
+    }
+  }
+
+  function persistSeen(set) {
+    const arr = [...set].slice(-500);
+    localStorage.setItem(SEEN_KEY, JSON.stringify(arr));
+  }
+
+  const settings = loadSettings();
+  const seen = loadSeen();
+
   const state = {
     status: "",
     source: "",
@@ -34,8 +76,10 @@
     selectedId: 0,
     maxId: 0,
     items: [],
-    sound: localStorage.getItem("lktech_sound") === "1",
+    sound: !!settings.sound,
     pollTimer: null,
+    mobileView: "list",
+    filterUnread: !!settings.onlyUnread,
   };
 
   function toast(text) {
@@ -47,8 +91,16 @@
     el._t = setTimeout(() => el.classList.remove("is-on"), 2800);
   }
 
+  function applyChrome() {
+    const root = document.documentElement;
+    root.dataset.theme = settings.themeDark ? "dark" : "light";
+    root.classList.toggle("lk-compact", !!settings.compact);
+    root.classList.toggle("lk-reduce-motion", !!settings.reduceMotion);
+    document.body?.classList.toggle("lk-theme-dark", !!settings.themeDark);
+  }
+
   function playNotifySound() {
-    if (!state.sound || reduce) return;
+    if (!state.sound || settings.reduceMotion) return;
     try {
       const ctx = new (window.AudioContext || window.webkitAudioContext)();
       const o = ctx.createOscillator();
@@ -65,6 +117,52 @@
       o.stop(now + 0.4);
       setTimeout(() => ctx.close(), 600);
     } catch (_) {}
+  }
+
+  async function desktopNotify(title, body) {
+    if (!settings.desktopNotify || !("Notification" in window)) return;
+    if (Notification.permission !== "granted") return;
+    try {
+      new Notification(title, { body, silent: true });
+    } catch (_) {}
+  }
+
+  function isUnread(id) {
+    return id && !seen.has(Number(id));
+  }
+
+  function markSeen(id) {
+    if (!id) return;
+    seen.add(Number(id));
+    persistSeen(seen);
+    syncUnreadBadge();
+  }
+
+  function markAllRead() {
+    state.items.forEach((i) => seen.add(Number(i.id)));
+    persistSeen(seen);
+    syncUnreadBadge();
+    renderList(state.items);
+  }
+
+  function unreadCount() {
+    return state.items.filter((i) => isUnread(i.id)).length;
+  }
+
+  function syncUnreadBadge() {
+    const count = unreadCount();
+    qsa("[data-unread-badge]").forEach((badge) => {
+      if (!settings.showUnreadBadge || count < 1) {
+        badge.hidden = true;
+        return;
+      }
+      badge.hidden = false;
+      badge.textContent = count > 99 ? "99+" : String(count);
+    });
+    qsa("[data-filter-unread]").forEach((btn) => {
+      btn.classList.toggle("has-unread", count > 0);
+      btn.classList.toggle("is-active", state.filterUnread);
+    });
   }
 
   function initials(item) {
@@ -131,38 +229,127 @@
   });
 
   function syncSoundButton() {
-    const btn = qs("[data-sound-toggle]");
-    if (!btn) return;
-    btn.classList.toggle("is-on", state.sound);
-    btn.setAttribute("aria-pressed", state.sound ? "true" : "false");
-    btn.textContent = state.sound ? "Звук вкл" : "Звук выкл";
+    qsa("[data-sound-toggle]").forEach((btn) => {
+      btn.classList.toggle("is-on", state.sound);
+      btn.setAttribute("aria-pressed", state.sound ? "true" : "false");
+      if (btn.matches(".lk-sound-toggle")) {
+        btn.textContent = state.sound ? "Звук вкл" : "Звук выкл";
+      }
+      const ico = qs("[data-sound-ico]", btn);
+      if (ico) ico.textContent = state.sound ? "♫" : "♪";
+    });
   }
 
-  function setMobileView(view) {
+  function setMobileView(view, { animate = true } = {}) {
+    if (!VIEWS.includes(view)) return;
     const app = qs("[data-dashboard]");
     if (!app) return;
+    state.mobileView = view;
     app.classList.remove("is-show-list", "is-show-detail", "is-show-tools");
     app.classList.add(`is-show-${view}`);
+    app.classList.toggle("is-animating", !!animate && !settings.reduceMotion);
     qsa("[data-mobile-view]").forEach((b) => {
       b.classList.toggle("is-active", b.dataset.mobileView === view);
     });
+    const track = qs("[data-stage-track]");
+    if (track) {
+      const idx = VIEWS.indexOf(view);
+      track.style.setProperty("--lk-pane", String(idx));
+    }
+  }
+
+  function shiftMobileView(delta) {
+    const idx = VIEWS.indexOf(state.mobileView);
+    const next = VIEWS[Math.max(0, Math.min(VIEWS.length - 1, idx + delta))];
+    if (next !== state.mobileView) setMobileView(next);
+  }
+
+  function bindSwipe(stage) {
+    if (!stage || stage.dataset.swipeReady === "1") return;
+    stage.dataset.swipeReady = "1";
+    let x0 = 0;
+    let y0 = 0;
+    let dx = 0;
+    let tracking = false;
+    let horizontal = null;
+
+    stage.addEventListener(
+      "touchstart",
+      (e) => {
+        if (settings.reduceMotion) return;
+        if (!window.matchMedia("(max-width: 860px)").matches) return;
+        const t = e.changedTouches[0];
+        x0 = t.clientX;
+        y0 = t.clientY;
+        dx = 0;
+        tracking = true;
+        horizontal = null;
+        qs("[data-stage-track]")?.classList.add("is-dragging");
+      },
+      { passive: true }
+    );
+
+    stage.addEventListener(
+      "touchmove",
+      (e) => {
+        if (!tracking) return;
+        const t = e.changedTouches[0];
+        dx = t.clientX - x0;
+        const dy = t.clientY - y0;
+        if (horizontal === null && (Math.abs(dx) > 8 || Math.abs(dy) > 8)) {
+          horizontal = Math.abs(dx) > Math.abs(dy);
+        }
+        if (!horizontal) return;
+        const track = qs("[data-stage-track]");
+        if (!track) return;
+        const idx = VIEWS.indexOf(state.mobileView);
+        const pct = (dx / stage.clientWidth) * 100;
+        track.style.transform = `translate3d(calc(${-idx * 100}% + ${pct}%), 0, 0)`;
+      },
+      { passive: true }
+    );
+
+    const end = () => {
+      if (!tracking) return;
+      tracking = false;
+      const track = qs("[data-stage-track]");
+      track?.classList.remove("is-dragging");
+      track?.style.removeProperty("transform");
+      if (!horizontal) return;
+      if (Math.abs(dx) > 56) shiftMobileView(dx < 0 ? 1 : -1);
+      else setMobileView(state.mobileView);
+    };
+
+    stage.addEventListener("touchend", end, { passive: true });
+    stage.addEventListener("touchcancel", end, { passive: true });
+  }
+
+  function visibleItems(items) {
+    if (!state.filterUnread) return items;
+    return items.filter((i) => isUnread(i.id));
   }
 
   function renderList(items) {
     const list = qs("[data-list]");
     if (!list) return;
-    if (!items.length) {
-      list.innerHTML = `<div class="lk-empty-mini">Заявок пока нет</div>`;
+    const rows = visibleItems(items);
+    if (!rows.length) {
+      list.innerHTML = `<div class="lk-empty-mini">${state.filterUnread ? "Нет непрочитанных" : "Заявок пока нет"}</div>`;
+      syncUnreadBadge();
       return;
     }
-    list.innerHTML = items
+    list.innerHTML = rows
       .map((item) => {
         const who = item.name || item.phone || (item.telegram ? `@${item.telegram}` : "Без имени");
+        const unread = isUnread(item.id);
         return `
-      <button type="button" class="lk-lead-card${item.id === state.selectedId ? " is-active" : ""}" data-open-lead="${item.id}">
+      <button type="button" class="lk-lead-card${item.id === state.selectedId ? " is-active" : ""}${unread ? " is-unread" : ""}" data-open-lead="${item.id}">
         <span class="lk-avatar">${escapeHtml(initials(item))}</span>
         <span>
-          <h3>${escapeHtml(who)}</h3>
+          <h3>
+            ${unread ? `<span class="lk-unread-dot" title="Непрочитано" aria-label="Непрочитано"></span>` : ""}
+            ${escapeHtml(who)}
+          </h3>
           <small>${escapeHtml(item.type_label)} · ${escapeHtml(item.created_human)}</small>
           <span class="lk-lead-meta">
             ${chip(item.status, item.status_label)}
@@ -172,6 +359,7 @@
       </button>`;
       })
       .join("");
+    syncUnreadBadge();
   }
 
   function renderStats(stats) {
@@ -253,6 +441,7 @@
     const aside = qs("[data-aside]");
     if (!main || !aside) return;
     showLeadWorkspace(true);
+    markSeen(lead.id);
 
     main.innerHTML = `
       <section class="lk-profile">
@@ -330,6 +519,7 @@
     initSelects(aside);
     bindDetailEvents(lead);
     setMobileView("detail");
+    renderList(state.items);
   }
 
   function flash(text, ok = true) {
@@ -422,6 +612,7 @@
 
   async function openLead(id) {
     state.selectedId = id;
+    markSeen(id);
     renderList(state.items);
     try {
       const lead = await api(`/leads/${id}`);
@@ -448,9 +639,14 @@
     renderList(state.items);
     const newMax = Number(data.max_id || 0);
     if (prevMax > 0 && newMax > prevMax) {
-      const count = (data.new_ids || []).length || 1;
+      const ids = data.new_ids || [];
+      const count = ids.length || 1;
       playNotifySound();
       toast(count === 1 ? "Новая заявка" : `Новых заявок: ${count}`);
+      desktopNotify("LK Tech CRM", count === 1 ? "Появилась новая заявка" : `Новых заявок: ${count}`);
+      if (settings.autoOpen && ids[0]) {
+        openLead(Number(ids[0]));
+      }
     }
     if (newMax > state.maxId) state.maxId = newMax;
     if (!silent && state.selectedId) {
@@ -464,29 +660,41 @@
 
   function startPolling() {
     clearInterval(state.pollTimer);
+    const ms = Number(settings.pollMs) || 8000;
     state.pollTimer = setInterval(() => {
       refreshFeed({ silent: true }).catch(() => {});
-    }, POLL_MS);
+    }, ms);
+  }
+
+  function bindSoundToggles() {
+    qsa("[data-sound-toggle]").forEach((btn) => {
+      if (btn.dataset.bound === "1") return;
+      btn.dataset.bound = "1";
+      btn.addEventListener("click", async () => {
+        state.sound = !state.sound;
+        settings.sound = state.sound;
+        saveSettings(settings);
+        syncSoundButton();
+        if (state.sound) {
+          try {
+            await Notification.requestPermission();
+          } catch (_) {}
+          playNotifySound();
+          toast("Звук включён");
+        }
+      });
+    });
   }
 
   async function initDashboard() {
     const app = qs("[data-dashboard]");
     if (!app) return;
+    applyChrome();
     initSelects();
     syncSoundButton();
-
-    qs("[data-sound-toggle]")?.addEventListener("click", async () => {
-      state.sound = !state.sound;
-      localStorage.setItem("lktech_sound", state.sound ? "1" : "0");
-      syncSoundButton();
-      if (state.sound) {
-        try {
-          await Notification.requestPermission();
-        } catch (_) {}
-        playNotifySound();
-        toast("Звук включён");
-      }
-    });
+    bindSoundToggles();
+    bindSwipe(qs("[data-stage]"));
+    setMobileView("list", { animate: false });
 
     qs("[data-list]")?.addEventListener("click", (e) => {
       const btn = e.target.closest("[data-open-lead]");
@@ -512,7 +720,31 @@
       btn.addEventListener("click", () => setMobileView(btn.dataset.mobileView));
     });
 
-    qs("[data-focus-list]")?.addEventListener("click", () => setMobileView("list"));
+    qs("[data-focus-list]")?.addEventListener("click", () => {
+      state.filterUnread = false;
+      settings.onlyUnread = false;
+      saveSettings(settings);
+      renderList(state.items);
+      setMobileView("list");
+    });
+
+    qs("[data-filter-unread]")?.addEventListener("click", () => {
+      state.filterUnread = !state.filterUnread;
+      settings.onlyUnread = state.filterUnread;
+      saveSettings(settings);
+      renderList(state.items);
+      setMobileView("list");
+      toast(state.filterUnread ? "Только непрочитанные" : "Все заявки");
+    });
+
+    qs("[data-refresh-feed]")?.addEventListener("click", async () => {
+      try {
+        await refreshFeed({ silent: true });
+        toast("Лента обновлена");
+      } catch (e) {
+        toast(e.message);
+      }
+    });
 
     await refreshFeed();
     const initial = Number(app.dataset.initialLead || 0);
@@ -520,7 +752,60 @@
     startPolling();
   }
 
+  function initSettingsPage() {
+    const root = qs("[data-settings]");
+    if (!root) return;
+    applyChrome();
+    syncSoundButton();
+
+    qsa("[data-setting]").forEach((input) => {
+      const key = input.dataset.setting;
+      input.checked = !!settings[key];
+      input.addEventListener("change", async () => {
+        settings[key] = input.checked;
+        if (key === "sound") state.sound = input.checked;
+        if (key === "onlyUnread") state.filterUnread = input.checked;
+        saveSettings(settings);
+        applyChrome();
+        syncSoundButton();
+        if (key === "desktopNotify" && input.checked) {
+          try {
+            await Notification.requestPermission();
+          } catch (_) {}
+        }
+        toast("Сохранено");
+      });
+    });
+
+    qsa("[data-setting-select]").forEach((select) => {
+      const key = select.dataset.settingSelect;
+      select.value = String(settings[key] || defaults[key]);
+      select.addEventListener("change", () => {
+        settings[key] = Number(select.value) || defaults[key];
+        saveSettings(settings);
+        toast("Сохранено");
+      });
+    });
+
+    qs("[data-mark-all-read]")?.addEventListener("click", () => {
+      markAllRead();
+      toast("Все отмечены прочитанными");
+    });
+
+    qs("[data-clear-seen]")?.addEventListener("click", () => {
+      seen.clear();
+      persistSeen(seen);
+      syncUnreadBadge();
+      toast("Прочитанные сброшены");
+    });
+  }
+
   document.addEventListener("DOMContentLoaded", () => {
+    applyChrome();
+    if (LKTECH.page === "settings" || qs("[data-settings]")) {
+      initSettingsPage();
+      return;
+    }
     initDashboard().catch((e) => toast(e.message));
   });
 })();

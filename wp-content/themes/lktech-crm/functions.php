@@ -19,7 +19,7 @@ add_action('wp_enqueue_scripts', static function () {
         'lktech-crm',
         get_template_directory_uri() . '/assets/css/crm.css',
         ['lktech-fonts'],
-        '3.0.1'
+        '3.1.0'
     );
 
     if (!is_user_logged_in() || !function_exists('lktech_crm_user_can_access') || !lktech_crm_user_can_access()) {
@@ -30,7 +30,7 @@ add_action('wp_enqueue_scripts', static function () {
         'lktech-crm',
         get_template_directory_uri() . '/assets/js/crm.js',
         [],
-        '3.0.1',
+        '3.1.0',
         true
     );
 

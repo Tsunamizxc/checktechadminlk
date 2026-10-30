@@ -3,19 +3,43 @@ set -euo pipefail
 
 REPO_DIR="${REPO_DIR:-/var/www/chectech_cur_usr/data/deploy/checktechadminlk}"
 WP_ROOT="${WP_ROOT:-/var/www/chectech_cur_usr/data/www/chectechadm.cursiva-dev.ru}"
-KEY="${DEPLOY_KEY:-/root/.ssh/chectechadm_deploy}"
-export GIT_SSH_COMMAND="ssh -i $KEY -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new"
+TOKEN_FILE="${GITHUB_TOKEN_FILE:-/root/.config/lktech/github_token}"
+REPO_SLUG="Tsunamizxc/checktechadminlk"
+
+if [ -f "$TOKEN_FILE" ]; then
+  # shellcheck disable=SC1090
+  GH_TOKEN="$(tr -d '\r\n' < "$TOKEN_FILE")"
+else
+  GH_TOKEN="${GITHUB_TOKEN:-}"
+fi
 
 mkdir -p "$REPO_DIR"
 cd "$REPO_DIR"
 
-if [ ! -d .git ]; then
-  git clone git@github.com:Tsunamizxc/checktechadminlk.git "$REPO_DIR"
+if [ -n "${GH_TOKEN:-}" ]; then
+  ORIGIN="https://x-access-token:${GH_TOKEN}@github.com/${REPO_SLUG}.git"
+elif [ -f "${DEPLOY_KEY:-/root/.ssh/chectechadm_deploy}" ]; then
+  KEY="${DEPLOY_KEY:-/root/.ssh/chectechadm_deploy}"
+  export GIT_SSH_COMMAND="ssh -i $KEY -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new"
+  ORIGIN="git@github.com:${REPO_SLUG}.git"
+else
+  echo "No GitHub token or deploy key configured" >&2
+  exit 1
 fi
 
-git remote set-url origin git@github.com:Tsunamizxc/checktechadminlk.git
+if [ ! -d .git ]; then
+  git clone "$ORIGIN" "$REPO_DIR"
+fi
+
+git remote set-url origin "$ORIGIN"
 git fetch origin
 git reset --hard origin/main
+
+# scrub token from remote URL in local config display
+git remote set-url origin "https://github.com/${REPO_SLUG}.git"
+if [ -n "${GH_TOKEN:-}" ]; then
+  git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${REPO_SLUG}.git"
+fi
 
 rsync -a --delete \
   "$REPO_DIR/wp-content/themes/lktech-crm/" \

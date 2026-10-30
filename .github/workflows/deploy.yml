@@ -1,0 +1,35 @@
+name: Deploy CRM
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install SSH key
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.SERVER_SSH_KEY }}
+
+      - name: Sync theme and plugin
+        env:
+          HOST: ${{ secrets.SERVER_HOST }}
+        run: |
+          set -euo pipefail
+          WP="/var/www/chectech_cur_usr/data/www/chectechadm.cursiva-dev.ru"
+          REPO="/var/www/chectech_cur_usr/data/deploy/checktechadminlk"
+          ssh -o StrictHostKeyChecking=no root@"$HOST" "mkdir -p '$REPO' '$WP/deploy'"
+          rsync -az --delete -e "ssh -o StrictHostKeyChecking=no" \
+            ./wp-content/themes/lktech-crm/ root@"$HOST":"$WP/wp-content/themes/lktech-crm/"
+          rsync -az --delete -e "ssh -o StrictHostKeyChecking=no" \
+            ./wp-content/plugins/lktech-crm/ root@"$HOST":"$WP/wp-content/plugins/lktech-crm/"
+          rsync -az --delete -e "ssh -o StrictHostKeyChecking=no" \
+            ./ root@"$HOST":"$REPO/"
+          rsync -az -e "ssh -o StrictHostKeyChecking=no" \
+            ./deploy/ root@"$HOST":"$WP/deploy/"
+          ssh -o StrictHostKeyChecking=no root@"$HOST" \
+            "chmod +x $WP/deploy/sync.sh $REPO/deploy/sync.sh; chown -R chectech_cur_usr:chectech_cur_usr $WP/wp-content/themes/lktech-crm $WP/wp-content/plugins/lktech-crm $WP/deploy"

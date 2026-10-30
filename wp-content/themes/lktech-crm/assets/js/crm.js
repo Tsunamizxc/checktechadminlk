@@ -239,14 +239,20 @@
       .join("");
   }
 
+  function showLeadWorkspace(show) {
+    const empty = qs("[data-empty]");
+    const detail = qs("[data-detail]");
+    const aside = qs("[data-aside]");
+    if (empty) empty.hidden = !!show;
+    if (detail) detail.hidden = !show;
+    if (aside) aside.hidden = !show;
+  }
+
   function renderDetail(lead) {
     const main = qs("[data-detail]");
-    const empty = qs("[data-empty]");
     const aside = qs("[data-aside]");
     if (!main || !aside) return;
-    empty.hidden = true;
-    main.hidden = false;
-    aside.hidden = false;
+    showLeadWorkspace(true);
 
     main.innerHTML = `
       <section class="lk-profile">
@@ -404,9 +410,7 @@
       try {
         await api(`/leads/${lead.id}`, { method: "DELETE" });
         state.selectedId = 0;
-        qs("[data-detail]").hidden = true;
-        qs("[data-aside]").hidden = true;
-        qs("[data-empty]").hidden = false;
+        showLeadWorkspace(false);
         toast("Заявка удалена");
         refreshFeed({ silent: true });
         setMobileView("list");
@@ -453,9 +457,7 @@
       const still = state.items.some((i) => i.id === state.selectedId);
       if (!still) {
         state.selectedId = 0;
-        qs("[data-detail]").hidden = true;
-        qs("[data-aside]").hidden = true;
-        qs("[data-empty]").hidden = false;
+        showLeadWorkspace(false);
       }
     }
   }

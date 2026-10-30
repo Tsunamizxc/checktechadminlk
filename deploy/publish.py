@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 import posixpath
+import time
 from pathlib import Path
 
 import paramiko
@@ -22,32 +23,57 @@ PATHS = [
     "deploy",
 ]
 
+SKIP_NAMES = {".DS_Store", "Thumbs.db", "__pycache__"}
+SKIP_SUFFIXES = {".pyc", ".pyo", ".bundle", ".tar"}
+
+
+def mkdir_p(sftp: paramiko.SFTPClient, remote: str) -> None:
+    parts = remote.strip("/").split("/")
+    cur = ""
+    for p in parts:
+        cur += "/" + p
+        try:
+            sftp.stat(cur)
+        except FileNotFoundError:
+            sftp.mkdir(cur)
+
+
+def put_file(sftp: paramiko.SFTPClient, local: Path, remote: str) -> None:
+    tmp = remote + ".uploading"
+    for attempt in range(3):
+        try:
+            try:
+                sftp.remove(tmp)
+            except OSError:
+                pass
+            sftp.put(str(local), tmp, confirm=True)
+            try:
+                sftp.remove(remote)
+            except OSError:
+                pass
+            sftp.rename(tmp, remote)
+            return
+        except OSError:
+            if attempt == 2:
+                raise
+            time.sleep(0.4)
+
 
 def upload_dir(sftp: paramiko.SFTPClient, local: Path, remote: str) -> None:
-    try:
-        sftp.stat(remote)
-    except FileNotFoundError:
-        # create nested
-        parts = remote.strip("/").split("/")
-        cur = ""
-        for p in parts:
-            cur += "/" + p
-            try:
-                sftp.stat(cur)
-            except FileNotFoundError:
-                sftp.mkdir(cur)
-
+    mkdir_p(sftp, remote)
     for root, dirs, files in os.walk(local):
+        dirs[:] = [d for d in dirs if d not in SKIP_NAMES and not d.startswith("_setup")]
         rel = os.path.relpath(root, local).replace("\\", "/")
         rdir = remote if rel == "." else posixpath.join(remote, rel)
-        try:
-            sftp.stat(rdir)
-        except FileNotFoundError:
-            sftp.mkdir(rdir)
+        mkdir_p(sftp, rdir)
         for name in files:
+            if name in SKIP_NAMES or name.startswith("_setup"):
+                continue
+            if Path(name).suffix in SKIP_SUFFIXES:
+                continue
             lp = Path(root) / name
             rp = posixpath.join(rdir, name)
-            sftp.put(str(lp), rp)
+            put_file(sftp, lp, rp)
 
 
 def main() -> None:
@@ -67,7 +93,6 @@ def main() -> None:
     cmds = [
         f"chmod +x {REMOTE_REPO}/deploy/sync.sh {REMOTE_WP}/deploy/sync.sh || true",
         f"chown -R chectech_cur_usr:chectech_cur_usr {REMOTE_WP}/wp-content/themes/lktech-crm {REMOTE_WP}/wp-content/plugins/lktech-crm {REMOTE_WP}/deploy",
-        f"git -C {REMOTE_REPO} config --global --add safe.directory {REMOTE_REPO} || true",
     ]
     for cmd in cmds:
         _, out, err = client.exec_command(cmd, timeout=60)
